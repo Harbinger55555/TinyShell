@@ -31,7 +31,7 @@ void sigtstp_handler(int sig);
 void sigint_handler(int sig);
 void sigquit_handler(int sig);
 void init_mask(sigset_t *newmask);
-void print_term_job(int jid, pid_t pid, int sig);
+void print_kill_job(int jid, pid_t pid, int sig);
 
 /*
  * <Write main's function header documentation. What does main do?>
@@ -188,28 +188,7 @@ void eval(const char *cmdline)
                 
                 // Unblocks sigs in mask until a signal whose action is to 
                 // invoke a signal handler or to terminate a process is received.
-                Sigsuspend(&oldmask); 
-//                 int status;
-//                 Sigprocmask(SIG_UNBLOCK, &newmask, NULL);
-// //                 printf("Entered here!\n");
-// //                 fflush(stdout);
-//                 if ((pid = Waitpid((pid_t)(-1), &status, WUNTRACED)) > 0) {
-//                     if (WIFEXITED(status) || WIFSIGNALED(status)) {
-// //                         printf("pid (%d)\n", pid);
-// //                         fflush(stdout);
-//                         Sigprocmask(SIG_BLOCK, &newmask, NULL);
-//                         struct job_t *job = getjobpid(job_list, pid);
-//                         int jid = job->jid;
-//                         deletejob(job_list, pid); // Delete from job_list after child reaped.
-
-//                         if (WIFSIGNALED(status)) {
-//                             print_term_job(jid, pid, WTERMSIG(status));
-//                         }
-//                         Sigprocmask(SIG_UNBLOCK, &newmask, NULL);
-//                     }
-//                 }
-                
-                
+                Sigsuspend(&oldmask);
                 Sigprocmask(SIG_UNBLOCK, &newmask, NULL);
                 
             } else if (parse_result == PARSELINE_BG) {
@@ -243,17 +222,21 @@ void sigchld_handler(int sig)
     int saved_errno = errno;
     if ((pid = Waitpid((pid_t)(-1), &status, WNOHANG)) > 0 || 
         (pid = Waitpid((pid_t)(-1), &status, WUNTRACED)) > 0) {
+        Sigprocmask(SIG_BLOCK, &newmask, NULL);
+        struct job_t *job = getjobpid(job_list, pid);
+        int jid = job->jid;
         if (WIFEXITED(status) || WIFSIGNALED(status)) {
-            Sigprocmask(SIG_BLOCK, &newmask, NULL);
-            struct job_t *job = getjobpid(job_list, pid);
-            int jid = job->jid;
             deletejob(job_list, pid); // Delete from job_list after child reaped.
-            
             if (WIFSIGNALED(status)) {
-                print_term_job(jid, pid, WTERMSIG(status));
+                print_kill_job(jid, pid, WTERMSIG(status));
             }
+        } else if (WIFSTOPPED(status)) {
+            // Change the status of pid in job list.
+            job->state = ST;
             Sigprocmask(SIG_UNBLOCK, &newmask, NULL);
+            print_kill_job(jid, pid, WSTOPSIG(status));
         }
+        Sigprocmask(SIG_UNBLOCK, &newmask, NULL);
     }
     errno = saved_errno;
     return;
@@ -270,7 +253,7 @@ void sigint_handler(int sig)
     
     Sigprocmask(SIG_BLOCK, &newmask, NULL);
     pid = -fgpid(job_list); // Group id needs to be preceded by "-" without quotes.
-    Kill(pid, SIGINT);
+    Kill(pid, SIGINT); // Send Kill SIGINT to pid.
     Sigprocmask(SIG_UNBLOCK, &newmask, NULL);
     return;
 }
@@ -280,6 +263,14 @@ void sigint_handler(int sig)
  */
 void sigtstp_handler(int sig) 
 {
+    pid_t pid;
+    sigset_t newmask;
+    init_mask(&newmask);
+    
+    Sigprocmask(SIG_BLOCK, &newmask, NULL);
+    pid = -fgpid(job_list); // Group id needs to be preceded by "-" without quotes.
+    Kill(pid, SIGTSTP); // Send Kill SIGTSTP to pid.
+    Sigprocmask(SIG_UNBLOCK, &newmask, NULL);
     return;
 }
 
@@ -292,14 +283,27 @@ void init_mask(sigset_t *newmask)
     return;
 }
 
-void print_term_job(int jid, pid_t pid, int sig)
+void print_kill_job(int jid, pid_t pid, int sig)
 {
     Sio_puts("Job [");
     Sio_putl(jid);
     Sio_puts("] (");
     Sio_putl(pid);
-    Sio_puts(") terminated by signal ");
+    Sio_puts(") ");
+    switch (sig) {
+        case SIGINT:
+            Sio_puts("terminated");
+            break;
+        case SIGTSTP:
+            Sio_puts("stopped");
+            break;
+        default:
+            break;
+    }
+    Sio_puts(" by signal ");
     Sio_putl(sig);
     Sio_puts("\n");
     return;
 }
+
+
