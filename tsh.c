@@ -30,6 +30,8 @@ void sigchld_handler(int sig);
 void sigtstp_handler(int sig);
 void sigint_handler(int sig);
 void sigquit_handler(int sig);
+void init_mask(sigset_t *newmask);
+void print_term_job(int jid, pid_t pid, int sig);
 
 /*
  * <Write main's function header documentation. What does main do?>
@@ -134,14 +136,11 @@ void eval(const char *cmdline)
 {
     parseline_return parse_result;     
     struct cmdline_tokens token;
-    sigset_t ourmask;
+    sigset_t newmask;
     sigset_t oldmask;
     
-    Sigemptyset(&ourmask);
+    init_mask(&newmask);
     Sigemptyset(&oldmask);
-    Sigaddset(&ourmask, SIGCHLD);
-    Sigaddset(&ourmask, SIGINT);
-    Sigaddset(&ourmask, SIGTSTP);
     
     // Parse command line
     parse_result = parseline(cmdline, &token);
@@ -159,7 +158,9 @@ void eval(const char *cmdline)
             exit(0);
             break;
         case BUILTIN_JOBS:
-            listjobs(job_list, 1); // Print the job list on stdout.
+            Sigprocmask(SIG_BLOCK, &newmask, &oldmask); // Block signals before accessing job list.
+            listjobs(job_list, STDOUT_FILENO); // Print the job list on stdout.
+            Sigprocmask(SIG_UNBLOCK, &newmask, &oldmask); // Unblock signals after accessing job list.
             break;
         case BUILTIN_BG:
             break;
@@ -168,13 +169,13 @@ void eval(const char *cmdline)
         case BUILTIN_NONE:
             ;
             pid_t pid;
-            Sigprocmask(SIG_BLOCK, &ourmask, &oldmask); // Block signals in mask before forking.
+            Sigprocmask(SIG_BLOCK, &newmask, &oldmask); // Block signals in mask before forking.
             pid = Fork();
             if (pid == 0) {
                 Setpgid(0, 0); // puts the child in a new process group with identical group ID to its PID.
 				
                 // Resets signal handlers to default behavior.
-                Sigprocmask(SIG_UNBLOCK, &ourmask, NULL);
+                Sigprocmask(SIG_UNBLOCK, &newmask, NULL);
                 Signal(SIGINT, SIG_DFL);
                 Signal(SIGCHLD, SIG_DFL);
                 Signal(SIGTSTP, SIG_DFL);
@@ -187,19 +188,37 @@ void eval(const char *cmdline)
                 
                 // Unblocks sigs in mask until a signal whose action is to 
                 // invoke a signal handler or to terminate a process is received.
-//                 Sigprocmask(SIG_UNBLOCK, &ourmask, NULL);
                 Sigsuspend(&oldmask); 
-                Sigprocmask(SIG_UNBLOCK, &ourmask, NULL);
-//                 printf("Sigsuspend finished!\n");
-//                 fflush(stdout);
+//                 int status;
+//                 Sigprocmask(SIG_UNBLOCK, &newmask, NULL);
+// //                 printf("Entered here!\n");
+// //                 fflush(stdout);
+//                 if ((pid = Waitpid((pid_t)(-1), &status, WUNTRACED)) > 0) {
+//                     if (WIFEXITED(status) || WIFSIGNALED(status)) {
+// //                         printf("pid (%d)\n", pid);
+// //                         fflush(stdout);
+//                         Sigprocmask(SIG_BLOCK, &newmask, NULL);
+//                         struct job_t *job = getjobpid(job_list, pid);
+//                         int jid = job->jid;
+//                         deletejob(job_list, pid); // Delete from job_list after child reaped.
+
+//                         if (WIFSIGNALED(status)) {
+//                             print_term_job(jid, pid, WTERMSIG(status));
+//                         }
+//                         Sigprocmask(SIG_UNBLOCK, &newmask, NULL);
+//                     }
+//                 }
+                
+                
+                Sigprocmask(SIG_UNBLOCK, &newmask, NULL);
                 
             } else if (parse_result == PARSELINE_BG) {
                 // Handle child process in background.
                 addjob(job_list, pid, BG, cmdline);
                 struct job_t *job = getjobpid(job_list, pid);
-                Sigprocmask(SIG_UNBLOCK, &ourmask, NULL);
                 
                 printf("[%d] (%d) %s\n", job->jid, job->pid, cmdline);
+                Sigprocmask(SIG_UNBLOCK, &newmask, NULL);
             }
             break;
     }
@@ -216,28 +235,24 @@ void eval(const char *cmdline)
  */
 void sigchld_handler(int sig) 
 {
-//     printf("Sigchild called!\n");
-//     fflush(stdout);
     pid_t pid;
     int status;
-    sigset_t ourmask;
-    
-    Sigemptyset(&ourmask);
-    Sigaddset(&ourmask, SIGCHLD);
-    Sigaddset(&ourmask, SIGINT);
-    Sigaddset(&ourmask, SIGTSTP);
+    sigset_t newmask;
+    init_mask(&newmask);
     
     int saved_errno = errno;
     if ((pid = Waitpid((pid_t)(-1), &status, WNOHANG)) > 0 || 
         (pid = Waitpid((pid_t)(-1), &status, WUNTRACED)) > 0) {
-//         printf("Statement entered!\n");
-//         fflush(stdout);
         if (WIFEXITED(status) || WIFSIGNALED(status)) {
-            Sigprocmask(SIG_BLOCK, &ourmask, NULL);
+            Sigprocmask(SIG_BLOCK, &newmask, NULL);
+            struct job_t *job = getjobpid(job_list, pid);
+            int jid = job->jid;
             deletejob(job_list, pid); // Delete from job_list after child reaped.
-//             printf("Job deleted!\n");
-//             fflush(stdout);
-            Sigprocmask(SIG_UNBLOCK, &ourmask, NULL);
+            
+            if (WIFSIGNALED(status)) {
+                print_term_job(jid, pid, WTERMSIG(status));
+            }
+            Sigprocmask(SIG_UNBLOCK, &newmask, NULL);
         }
     }
     errno = saved_errno;
@@ -249,7 +264,14 @@ void sigchld_handler(int sig)
  */
 void sigint_handler(int sig) 
 {
-    Kill(fgpid(job_list), sig); // Group id needs to be preceded by "-" without quotes.
+    pid_t pid;
+    sigset_t newmask;
+    init_mask(&newmask);
+    
+    Sigprocmask(SIG_BLOCK, &newmask, NULL);
+    pid = -fgpid(job_list); // Group id needs to be preceded by "-" without quotes.
+    Kill(pid, SIGINT);
+    Sigprocmask(SIG_UNBLOCK, &newmask, NULL);
     return;
 }
 
@@ -258,5 +280,26 @@ void sigint_handler(int sig)
  */
 void sigtstp_handler(int sig) 
 {
+    return;
+}
+
+void init_mask(sigset_t *newmask)
+{
+    Sigemptyset(newmask);
+    Sigaddset(newmask, SIGCHLD);
+    Sigaddset(newmask, SIGINT);
+    Sigaddset(newmask, SIGTSTP);
+    return;
+}
+
+void print_term_job(int jid, pid_t pid, int sig)
+{
+    Sio_puts("Job [");
+    Sio_putl(jid);
+    Sio_puts("] (");
+    Sio_putl(pid);
+    Sio_puts(") terminated by signal ");
+    Sio_putl(sig);
+    Sio_puts("\n");
     return;
 }
