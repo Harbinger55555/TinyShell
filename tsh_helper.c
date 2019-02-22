@@ -458,44 +458,46 @@ void listjobs(struct job_t *jl, int output_fd)
 
     for (i = 0; i < MAXJOBS; i++)
     {
-        memset(buf, '\0', MAXLINE_TSH);
-        if (jl[i].pid != 0)
-        {
-            sprintf(buf, "[%d] (%d) ", jl[i].jid, jl[i].pid);
-            if(write(output_fd, buf, strlen(buf)) < 0)
-            {
-                fprintf(stderr, "Error writing to output file\n");
-                exit(EXIT_FAILURE);
-            }
+        if (jl[i].state == BG || jl[i].state == ST) {
             memset(buf, '\0', MAXLINE_TSH);
-            switch (jl[i].state)
+            if (jl[i].pid != 0)
             {
-            case BG:
-                sprintf(buf, "Running    ");
-                break;
-            case FG:
-                sprintf(buf, "Foreground ");
-                break;
-            case ST:
-                sprintf(buf, "Stopped    ");
-                break;
-            default:
-                sprintf(buf, "listjobs: Internal error: job[%d].state=%d ",
-                        i, jl[i].state);
-            }
+                sprintf(buf, "[%d] (%d) ", jl[i].jid, jl[i].pid);
+                if(write(output_fd, buf, strlen(buf)) < 0)
+                {
+                    fprintf(stderr, "Error writing to output file\n");
+                    exit(EXIT_FAILURE);
+                }
+                memset(buf, '\0', MAXLINE_TSH);
+                switch (jl[i].state)
+                {
+                case BG:
+                    sprintf(buf, "Running    ");
+                    break;
+                case FG:
+                    sprintf(buf, "Foreground ");
+                    break;
+                case ST:
+                    sprintf(buf, "Stopped    ");
+                    break;
+                default:
+                    sprintf(buf, "listjobs: Internal error: job[%d].state=%d ",
+                            i, jl[i].state);
+                }
 
-            if(write(output_fd, buf, strlen(buf)) < 0)
-            {
-                fprintf(stderr, "Error writing to output file\n");
-                exit(EXIT_FAILURE);
-            }
+                if(write(output_fd, buf, strlen(buf)) < 0)
+                {
+                    fprintf(stderr, "Error writing to output file\n");
+                    exit(EXIT_FAILURE);
+                }
 
-            memset(buf, '\0', MAXLINE_TSH);
-            sprintf(buf, "%s\n", jl[i].cmdline);
-            if(write(output_fd, buf, strlen(buf)) < 0)
-            {
-                fprintf(stderr, "Error writing to output file\n");
-                exit(EXIT_FAILURE);
+                memset(buf, '\0', MAXLINE_TSH);
+                sprintf(buf, "%s\n", jl[i].cmdline);
+                if(write(output_fd, buf, strlen(buf)) < 0)
+                {
+                    fprintf(stderr, "Error writing to output file\n");
+                    exit(EXIT_FAILURE);
+                }
             }
         }
     }

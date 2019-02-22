@@ -32,6 +32,8 @@ void sigint_handler(int sig);
 void sigquit_handler(int sig);
 void init_mask(sigset_t *newmask);
 void print_kill_job(int jid, pid_t pid, int sig);
+int Npow10(int N, int n);
+int gjid_past_amp(char* argv1);
 
 /*
  * <Write main's function header documentation. What does main do?>
@@ -144,7 +146,6 @@ void eval(const char *cmdline)
     
     // Parse command line
     parse_result = parseline(cmdline, &token);
-
     if (parse_result == PARSELINE_ERROR || parse_result == PARSELINE_EMPTY)
     {
         return;
@@ -158,13 +159,34 @@ void eval(const char *cmdline)
             exit(0);
             break;
         case BUILTIN_JOBS:
-            Sigprocmask(SIG_BLOCK, &newmask, &oldmask); // Block signals before accessing job list.
+            Sigprocmask(SIG_BLOCK, &newmask, NULL); // Block signals before accessing job list.
             listjobs(job_list, STDOUT_FILENO); // Print the job list on stdout.
-            Sigprocmask(SIG_UNBLOCK, &newmask, &oldmask); // Unblock signals after accessing job list.
+            Sigprocmask(SIG_UNBLOCK, &newmask, NULL); // Unblock signals after accessing job list.
             break;
         case BUILTIN_BG:
+            ;
+            // bg only takes in one job at a time (bg %n where n is the job id).
+            // The bg job command restarts job by sending it a SIGCONT signal, 
+            // and then runs it in the background.
+            int jid = gjid_past_amp(token.argv[1]);
+            
+            Sigprocmask(SIG_BLOCK, &newmask, NULL); // Block signals before accessing job list.
+            struct job_t *job = getjobjid(job_list, jid);
+            if (job && job->state == ST) {
+                job->state = BG;
+                Kill(-job->pid, SIGCONT); // Will halt program if SIGCONT fails.
+                printf("[%d] (%d) %s\n", jid, job->pid, job->cmdline);
+            }
+            Sigprocmask(SIG_UNBLOCK, &newmask, NULL); // Unblock signals after accessing job list.
+            
             break;
         case BUILTIN_FG:
+            // fg only takes in one job at a time (fg %n where n is the job id).
+            // The fg job command restarts job by sending it a SIGCONT signal, 
+            // and then runs it in the foreground.
+//             int jid = gjid_past_amp(token.argv[1]);
+//             Kill(-jid, SIGCONT);
+//             Sigsuspend();
             break;
         case BUILTIN_NONE:
             ;
@@ -233,7 +255,6 @@ void sigchld_handler(int sig)
         } else if (WIFSTOPPED(status)) {
             // Change the status of pid in job list.
             job->state = ST;
-            Sigprocmask(SIG_UNBLOCK, &newmask, NULL);
             print_kill_job(jid, pid, WSTOPSIG(status));
         }
         Sigprocmask(SIG_UNBLOCK, &newmask, NULL);
@@ -306,4 +327,21 @@ void print_kill_job(int jid, pid_t pid, int sig)
     return;
 }
 
+// Nx10^n
+int Npow10(int N, int n)
+{
+  N <<= n;
+  while(n--) N += N << 2;
+  return N/10;
+}
 
+int gjid_past_amp(char* argv1) 
+{
+    char* job_str = argv1 + 1; // To get rid of the %
+    int jid_digits = strlen(argv1) - 1;
+    int count, jid = 0;
+    for(count = 0; count < jid_digits; count++) {
+        jid = jid * Npow10(10, count) + atoi(job_str++);
+    }
+    return jid;
+}
