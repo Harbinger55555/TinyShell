@@ -35,6 +35,7 @@ void print_kill_job(int jid, pid_t pid, int sig);
 int Npow10(int N, int n);
 int gjid_past_amp(char* argv1);
 void reset_volatiles();
+void builtin_bgfg(char* argv1, sigset_t newmask, job_state state);
 
 volatile sig_atomic_t sig_int = 0; // When a SIGINT signal arrives, set this variable.
 volatile sig_atomic_t sig_tstp = 0; // When a SIGTSTP signal arrives, set this variable.
@@ -149,6 +150,7 @@ void eval(const char *cmdline)
     sigset_t newmask;
     sigset_t oldmask;
     init_mask(&newmask);
+    Sigemptyset(&oldmask);
     
     // Parse command line
     parse_result = parseline(cmdline, &token);
@@ -176,25 +178,17 @@ void eval(const char *cmdline)
             // bg only takes in one job at a time (bg %n where n is the job id).
             // The bg job command restarts job by sending it a SIGCONT signal, 
             // and then runs it in the background.
-            int jid = gjid_past_amp(token.argv[1]);
-            
-            Sigprocmask(SIG_BLOCK, &newmask, NULL); // Block signals before accessing job list.
-            struct job_t *job = getjobjid(job_list, jid);
-            if (job && job->state == ST) {
-                job->state = BG;
-                Kill(-job->pid, SIGCONT); // Will halt program if SIGCONT fails.
-                printf("[%d] (%d) %s\n", jid, job->pid, job->cmdline);
-            }
-            Sigprocmask(SIG_UNBLOCK, &newmask, NULL); // Unblock signals after accessing job list.
-            
+            builtin_bgfg(token.argv[1], newmask, BG);
             break;
         case BUILTIN_FG:
+            ;
             // fg only takes in one job at a time (fg %n where n is the job id).
             // The fg job command restarts job by sending it a SIGCONT signal, 
             // and then runs it in the foreground.
-//             int jid = gjid_past_amp(token.argv[1]);
-//             Kill(-jid, SIGCONT);
-//             Sigsuspend();
+            builtin_bgfg(token.argv[1], newmask, FG);
+            while(!sig_chld)
+                Sigsuspend(&oldmask);
+            reset_volatiles();
             break;
         case BUILTIN_NONE:
             ;
@@ -384,5 +378,24 @@ void reset_volatiles()
     sig_int = 0;
     sig_tstp = 0;
     sig_chld = 0;
+    return;
+}
+
+void builtin_bgfg(char* argv1, sigset_t newmask, job_state state) 
+{
+    int jid = gjid_past_amp(argv1);
+            
+    Sigprocmask(SIG_BLOCK, &newmask, NULL); // Block signals before accessing job list.
+    struct job_t *job = getjobjid(job_list, jid);
+    if (job && job->state == ST) {
+        Kill(-job->pid, SIGCONT); // Will halt program if SIGCONT fails.
+        if (state == FG) {
+            job->state = FG;
+        } else if (state == BG) {
+            job->state = BG;
+            printf("[%d] (%d) %s\n", jid, job->pid, job->cmdline);
+        }
+    }
+    Sigprocmask(SIG_UNBLOCK, &newmask, NULL); // Unblock signals after accessing job list.
     return;
 }

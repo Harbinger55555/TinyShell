@@ -16,6 +16,9 @@ tput reset
 # ./sdriver -s tsh -t 12 -i 1
 # ./sdriver -s tsh -t 13 -i 1
 # ./sdriver -s tsh -t 14 -i 1
-# ./sdriver -s tsh -t 15 -i 1
+# ./sdriver -s tsh -t 15 -i 1 # Flaky
+# ./sdriver -s tsh -t 16 -i 1 # Not working
+# ./sdriver -s tsh -t 17 -i 1
+./sdriver -s tsh -t 1 -i 1
 
 
