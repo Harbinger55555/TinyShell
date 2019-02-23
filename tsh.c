@@ -96,7 +96,8 @@ int main(int argc, char **argv)
             printf("%s", prompt);
             fflush(stdout);
         }
-
+//         printf("Before fgets called!\n");
+//         fflush(stdout);
         if ((fgets(cmdline, MAXLINE_TSH, stdin) == NULL) && ferror(stdin))
         {
             app_error("fgets error");
@@ -116,6 +117,7 @@ int main(int argc, char **argv)
         
         // Evaluate the command line
         eval(cmdline);
+//         printf("After eval!\n");
         
         fflush(stdout);
     } 
@@ -146,7 +148,6 @@ void eval(const char *cmdline)
     sigset_t newmask;
     sigset_t oldmask;
     init_mask(&newmask);
-    Sigemptyset(&oldmask);
     
     // Parse command line
     parse_result = parseline(cmdline, &token);
@@ -160,6 +161,8 @@ void eval(const char *cmdline)
 	// 3). Check if it should be run in FG or BG mode.
     switch (token.builtin) {
         case BUILTIN_QUIT:
+            printf("Quit entered!\n");
+            fflush(stdout);
             exit(0);
             break;
         case BUILTIN_JOBS:
@@ -194,6 +197,8 @@ void eval(const char *cmdline)
             break;
         case BUILTIN_NONE:
             ;
+//             printf("Builtin_none! token (%d)\n", token.builtin);
+//             fflush(stdout);
             pid_t pid;
             Sigprocmask(SIG_BLOCK, &newmask, &oldmask); // Block signals in mask before forking.
             pid = Fork();
@@ -214,15 +219,21 @@ void eval(const char *cmdline)
                 
                 // Suspends the shell until a signal whose action is to 
                 // invoke a signal handler or to terminate a process is received.
-                while(!sig_int && !sig_tstp && !sig_chld)
-                    Sigsuspend(&oldmask);
+                while(!sig_chld) {
+//                     printf("While suspend entered! sig_int(%d) sig_tstp(%d) sig_chld(%d)\n", sig_int, sig_tstp, sig_chld);
+//                     fflush(stdout);
+                    sigsuspend(&oldmask);
+//                     printf("Suspend ended! sig_int(%d) sig_tstp(%d) sig_chld(%d)\n", sig_int, sig_tstp, sig_chld);
+//                     fflush(stdout);
+                }
                 
                 // Resets the volatile booleans.
                 sig_int = 0;
                 sig_tstp = 0;
                 sig_chld = 0;
                 Sigprocmask(SIG_UNBLOCK, &newmask, NULL);
-                
+//                 printf("if statement end reached!\n");
+//                 fflush(stdout);
             } else if (parse_result == PARSELINE_BG) {
                 // Handle child process in background.
                 addjob(job_list, pid, BG, cmdline);
@@ -255,6 +266,8 @@ void sigchld_handler(int sig)
     if ((pid = Waitpid((pid_t)(-1), &status, WNOHANG)) > 0 || 
         (pid = Waitpid((pid_t)(-1), &status, WUNTRACED)) > 0) {
         Sigprocmask(SIG_BLOCK, &newmask, NULL);
+//         printf("pid (%d)\n", pid);
+//         fflush(stdout);
         struct job_t *job = getjobpid(job_list, pid);
         int jid = job->jid;
         if (WIFEXITED(status) || WIFSIGNALED(status)) {
@@ -267,7 +280,6 @@ void sigchld_handler(int sig)
             job->state = ST;
             print_kill_job(jid, pid, WSTOPSIG(status));
         }
-        Sigprocmask(SIG_UNBLOCK, &newmask, NULL);
     }
     errno = saved_errno;
     sig_chld = 1; // Successful SIGCHLD handling allows parent to exit suspend.
@@ -287,7 +299,6 @@ void sigint_handler(int sig)
     pid = -fgpid(job_list); // Group id needs to be preceded by "-" without quotes.
     Kill(pid, SIGINT); // Send Kill SIGINT to pid.
     sig_int = 1; // Successful kill allows parent to exit suspend.
-    Sigprocmask(SIG_UNBLOCK, &newmask, NULL);
     return;
 }
 
@@ -304,7 +315,6 @@ void sigtstp_handler(int sig)
     pid = -fgpid(job_list); // Group id needs to be preceded by "-" without quotes.
     Kill(pid, SIGTSTP); // Send Kill SIGTSTP to pid.
     sig_tstp = 1; // Successful stop allows parent to exit suspend.
-    Sigprocmask(SIG_UNBLOCK, &newmask, NULL);
     return;
 }
 
