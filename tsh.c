@@ -35,6 +35,10 @@ void print_kill_job(int jid, pid_t pid, int sig);
 int Npow10(int N, int n);
 int gjid_past_amp(char* argv1);
 
+volatile sig_atomic_t sig_int = 0; // When a SIGINT signal arrives, set this variable.
+volatile sig_atomic_t sig_tstp = 0; // When a SIGTSTP signal arrives, set this variable.
+volatile sig_atomic_t sig_chld = 0; // When a SIGCHLD signal arrives, set this variable.
+
 /*
  * <Write main's function header documentation. What does main do?>
  * "Each function should be prefaced with a comment describing the purpose
@@ -138,9 +142,9 @@ void eval(const char *cmdline)
 {
     parseline_return parse_result;     
     struct cmdline_tokens token;
+    
     sigset_t newmask;
     sigset_t oldmask;
-    
     init_mask(&newmask);
     Sigemptyset(&oldmask);
     
@@ -208,9 +212,15 @@ void eval(const char *cmdline)
                 // Handle child process in foreground.
                 addjob(job_list, pid, FG, cmdline);
                 
-                // Unblocks sigs in mask until a signal whose action is to 
+                // Suspends the shell until a signal whose action is to 
                 // invoke a signal handler or to terminate a process is received.
-                Sigsuspend(&oldmask);
+                while(!sig_int && !sig_tstp && !sig_chld)
+                    Sigsuspend(&oldmask);
+                
+                // Resets the volatile booleans.
+                sig_int = 0;
+                sig_tstp = 0;
+                sig_chld = 0;
                 Sigprocmask(SIG_UNBLOCK, &newmask, NULL);
                 
             } else if (parse_result == PARSELINE_BG) {
@@ -260,6 +270,7 @@ void sigchld_handler(int sig)
         Sigprocmask(SIG_UNBLOCK, &newmask, NULL);
     }
     errno = saved_errno;
+    sig_chld = 1; // Successful SIGCHLD handling allows parent to exit suspend.
     return;
 }
 
@@ -275,6 +286,7 @@ void sigint_handler(int sig)
     Sigprocmask(SIG_BLOCK, &newmask, NULL);
     pid = -fgpid(job_list); // Group id needs to be preceded by "-" without quotes.
     Kill(pid, SIGINT); // Send Kill SIGINT to pid.
+    sig_int = 1; // Successful kill allows parent to exit suspend.
     Sigprocmask(SIG_UNBLOCK, &newmask, NULL);
     return;
 }
@@ -291,6 +303,7 @@ void sigtstp_handler(int sig)
     Sigprocmask(SIG_BLOCK, &newmask, NULL);
     pid = -fgpid(job_list); // Group id needs to be preceded by "-" without quotes.
     Kill(pid, SIGTSTP); // Send Kill SIGTSTP to pid.
+    sig_tstp = 1; // Successful stop allows parent to exit suspend.
     Sigprocmask(SIG_UNBLOCK, &newmask, NULL);
     return;
 }
