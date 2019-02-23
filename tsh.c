@@ -34,6 +34,7 @@ void init_mask(sigset_t *newmask);
 void print_kill_job(int jid, pid_t pid, int sig);
 int Npow10(int N, int n);
 int gjid_past_amp(char* argv1);
+void reset_volatiles();
 
 volatile sig_atomic_t sig_int = 0; // When a SIGINT signal arrives, set this variable.
 volatile sig_atomic_t sig_tstp = 0; // When a SIGTSTP signal arrives, set this variable.
@@ -216,21 +217,20 @@ void eval(const char *cmdline)
             } else if (parse_result == PARSELINE_FG) {
                 // Handle child process in foreground.
                 addjob(job_list, pid, FG, cmdline);
+//                 printf("FG entered!\n");
+//                 fflush(stdout);
                 
                 // Suspends the shell until a signal whose action is to 
                 // invoke a signal handler or to terminate a process is received.
                 while(!sig_chld) {
 //                     printf("While suspend entered! sig_int(%d) sig_tstp(%d) sig_chld(%d)\n", sig_int, sig_tstp, sig_chld);
 //                     fflush(stdout);
-                    sigsuspend(&oldmask);
+                    Sigsuspend(&oldmask);
 //                     printf("Suspend ended! sig_int(%d) sig_tstp(%d) sig_chld(%d)\n", sig_int, sig_tstp, sig_chld);
 //                     fflush(stdout);
                 }
                 
-                // Resets the volatile booleans.
-                sig_int = 0;
-                sig_tstp = 0;
-                sig_chld = 0;
+                reset_volatiles();
                 Sigprocmask(SIG_UNBLOCK, &newmask, NULL);
 //                 printf("if statement end reached!\n");
 //                 fflush(stdout);
@@ -238,8 +238,11 @@ void eval(const char *cmdline)
                 // Handle child process in background.
                 addjob(job_list, pid, BG, cmdline);
                 struct job_t *job = getjobpid(job_list, pid);
+//                 printf("BG entered!\n");
+//                 fflush(stdout);
                 
                 printf("[%d] (%d) %s\n", job->jid, job->pid, cmdline);
+//                 reset_volatiles();
                 Sigprocmask(SIG_UNBLOCK, &newmask, NULL);
             }
             break;
@@ -266,13 +269,19 @@ void sigchld_handler(int sig)
     if ((pid = Waitpid((pid_t)(-1), &status, WNOHANG)) > 0 || 
         (pid = Waitpid((pid_t)(-1), &status, WUNTRACED)) > 0) {
         Sigprocmask(SIG_BLOCK, &newmask, NULL);
-//         printf("pid (%d)\n", pid);
+//         printf("sigchld_handler pid (%d)\n", pid);
 //         fflush(stdout);
         struct job_t *job = getjobpid(job_list, pid);
         int jid = job->jid;
+//         printf("sigchld_handler jid (%d)\n", jid);
+//         fflush(stdout);
         if (WIFEXITED(status) || WIFSIGNALED(status)) {
+//             printf("Delete job entered!\n");
+//             fflush(stdout);
             deletejob(job_list, pid); // Delete from job_list after child reaped.
             if (WIFSIGNALED(status)) {
+//                 printf("WIFSIGNALED!\n");
+//                 fflush(stdout);
                 print_kill_job(jid, pid, WTERMSIG(status));
             }
         } else if (WIFSTOPPED(status)) {
@@ -353,9 +362,9 @@ void print_kill_job(int jid, pid_t pid, int sig)
 // Nx10^n
 int Npow10(int N, int n)
 {
-  N <<= n;
-  while(n--) N += N << 2;
-  return N/10;
+    N <<= n;
+    while(n--) N += N << 2;
+    return N/10;
 }
 
 int gjid_past_amp(char* argv1) 
@@ -367,4 +376,13 @@ int gjid_past_amp(char* argv1)
         jid = jid * Npow10(10, count) + atoi(job_str++);
     }
     return jid;
+}
+
+void reset_volatiles() 
+{
+    // Resets the volatile booleans.
+    sig_int = 0;
+    sig_tstp = 0;
+    sig_chld = 0;
+    return;
 }
