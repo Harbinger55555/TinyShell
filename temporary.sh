@@ -23,4 +23,4 @@ tput reset
 # ./sdriver -s tsh -t 19 -i 10
 # ./sdriver -s tsh -t 20 -i 10
 # ./sdriver -s tsh -t 21 -i 10
-./sdriver -s tsh -t 22 -i 1
+# ./sdriver -s tsh -t 22 -i 10

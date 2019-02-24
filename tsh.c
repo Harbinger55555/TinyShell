@@ -199,6 +199,10 @@ void eval(const char *cmdline)
                 set_sig_defaults();
                 Sigprocmask(SIG_UNBLOCK, &newmask, NULL);
                 
+                if (token.infile) {
+                    // Redirect token filein to stdin.
+                    freopen(token.infile, "r", stdin);
+                }
                 Execve(token.argv[0], token.argv, environ);
                 exit(0);
             } else if (parse_result == PARSELINE_FG) {
