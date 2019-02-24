@@ -161,8 +161,6 @@ void eval(const char *cmdline)
 	// 3). Check if it should be run in FG or BG mode.
     switch (token.builtin) {
         case BUILTIN_QUIT:
-            printf("Quit entered!\n");
-            fflush(stdout);
             exit(0);
             break;
         case BUILTIN_JOBS:
@@ -206,8 +204,6 @@ void eval(const char *cmdline)
             } else if (parse_result == PARSELINE_FG) {
                 // Handle child process in foreground.
                 addjob(job_list, pid, FG, cmdline);
-//                 printf("FG entered!\n");
-//                 fflush(stdout);
                 
                 // Suspends the shell until a signal whose action is to 
                 // invoke a signal handler or to terminate a process is received.
@@ -221,8 +217,6 @@ void eval(const char *cmdline)
                 // Handle child process in background.
                 addjob(job_list, pid, BG, cmdline);
                 struct job_t *job = getjobpid(job_list, pid);
-//                 printf("BG entered!\n");
-//                 fflush(stdout);
                 
                 printf("[%d] (%d) %s\n", job->jid, job->pid, cmdline);
                 Sigprocmask(SIG_UNBLOCK, &newmask, NULL);
@@ -248,7 +242,6 @@ void sigchld_handler(int sig)
     sigset_t newmask;
     init_mask(&newmask);
     
-    int saved_errno = errno;
     // process doesnt exist if pid < 0.
     // if pid == 0, no change in its state yet.
     while ((pid = waitpid((pid_t)(-1), &status, WNOHANG | WUNTRACED)) > 0) {
@@ -273,7 +266,6 @@ void sigchld_handler(int sig)
         Sigprocmask(SIG_UNBLOCK, &newmask, NULL);
     }
         
-    errno = saved_errno;
     if (state == FG) {
         sig_chld = 1; // Successful SIGCHLD handling of fg process allows parent to exit suspend.
     }
@@ -371,9 +363,9 @@ int gjid_past_perc(char* argv1)
 
 void builtin_bgfg(char* argv1, sigset_t newmask, job_state state) 
 {
+    Sigprocmask(SIG_BLOCK, &newmask, NULL); // Block signals before accessing job list.
     int jid = gjid_past_perc(argv1);
             
-    Sigprocmask(SIG_BLOCK, &newmask, NULL); // Block signals before accessing job list.
     struct job_t *job = getjobjid(job_list, jid);
     if (job && job->state == ST) {
         Kill(-job->pid, SIGCONT); // Will halt program if SIGCONT fails.

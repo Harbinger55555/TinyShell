@@ -16,11 +16,11 @@ tput reset
 # ./sdriver -s tsh -t 12 -i 10
 # ./sdriver -s tsh -t 13 -i 10
 # ./sdriver -s tsh -t 14 -i 10
-# ./sdriver -s tsh -t 15 -i 30 # Flaky
+# ./sdriver -s tsh -t 15 -i 10 # Flaky
 # ./sdriver -s tsh -t 16 -i 30 # Flaky
 # ./sdriver -s tsh -t 17 -i 10
 # ./sdriver -s tsh -t 18 -i 10
 # ./sdriver -s tsh -t 19 -i 10
 # ./sdriver -s tsh -t 20 -i 10
-# ./sdriver -s tsh -t 21 -i 1 # Not working
-# ./sdriver -s tsh -t 22 -i 1
+# ./sdriver -s tsh -t 21 -i 10
+./sdriver -s tsh -t 22 -i 1
