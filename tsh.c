@@ -31,15 +31,13 @@ void sigtstp_handler(int sig);
 void sigint_handler(int sig);
 void sigquit_handler(int sig);
 void init_mask(sigset_t *newmask);
+pid_t get_sig_gpid();
 void set_sig_defaults();
 void print_kill_job(int jid, pid_t pid, int sig);
 int Npow10(int N, int n);
 int gjid_past_perc(char* argv1);
-void reset_volatiles();
 void builtin_bgfg(char* argv1, sigset_t newmask, job_state state);
 
-volatile sig_atomic_t sig_int = 0; // When a SIGINT signal arrives, set this variable.
-volatile sig_atomic_t sig_tstp = 0; // When a SIGTSTP signal arrives, set this variable.
 volatile sig_atomic_t sig_chld = 0; // When a SIGCHLD signal arrives, set this variable.
 
 /*
@@ -187,7 +185,7 @@ void eval(const char *cmdline)
             builtin_bgfg(token.argv[1], newmask, FG);
             while(!sig_chld)
                 Sigsuspend(&oldmask);
-            reset_volatiles();
+            sig_chld = 0; // Resets the sig_chld volatile.
             break;
         case BUILTIN_NONE:
             ;
@@ -200,8 +198,8 @@ void eval(const char *cmdline)
                 Setpgid(0, 0); // puts the child in a new process group with identical group ID to its PID.
 				
                 // Resets signal handlers to default behavior.
-                Sigprocmask(SIG_UNBLOCK, &newmask, NULL);
                 set_sig_defaults();
+                Sigprocmask(SIG_UNBLOCK, &newmask, NULL);
                 
                 Execve(token.argv[0], token.argv, environ);
                 exit(0);
@@ -217,7 +215,7 @@ void eval(const char *cmdline)
                     Sigsuspend(&oldmask);
                 }
                 
-                reset_volatiles();
+                sig_chld = 0; // Resets the sig_chld volatile.
                 Sigprocmask(SIG_UNBLOCK, &newmask, NULL);
             } else if (parse_result == PARSELINE_BG) {
                 // Handle child process in background.
@@ -263,10 +261,8 @@ void sigchld_handler(int sig)
 //         printf("sigchld_handler jid (%d)\n", jid);
 //         fflush(stdout);
         if (WIFEXITED(status) || WIFSIGNALED(status)) {
-//             Sio_puts("Delete job entered!\n");
             deletejob(job_list, pid); // Delete from job_list after child reaped.
             if (WIFSIGNALED(status)) {
-//                 Sio_puts("WIFSIGNALED!\n");
                 print_kill_job(jid, pid, WTERMSIG(status));
             }
         } else if (WIFSTOPPED(status)) {
@@ -274,6 +270,7 @@ void sigchld_handler(int sig)
             job->state = ST;
             print_kill_job(jid, pid, WSTOPSIG(status));
         }
+        Sigprocmask(SIG_UNBLOCK, &newmask, NULL);
     }
         
     errno = saved_errno;
@@ -288,15 +285,7 @@ void sigchld_handler(int sig)
  */
 void sigint_handler(int sig) 
 {
-    pid_t pid;
-    sigset_t newmask;
-    init_mask(&newmask);
-    
-    Sigprocmask(SIG_BLOCK, &newmask, NULL);
-    pid = -fgpid(job_list); // Group id needs to be preceded by "-" without quotes.
-    
-    Kill(pid, SIGINT); // Send Kill SIGINT to pid.
-    sig_int = 1; // Successful kill allows parent to exit suspend.
+    Kill(get_sig_gpid(), SIGINT); // Send Kill SIGINT to pid.
     return;
 }
 
@@ -305,14 +294,7 @@ void sigint_handler(int sig)
  */
 void sigtstp_handler(int sig) 
 {
-    pid_t pid;
-    sigset_t newmask;
-    init_mask(&newmask);
-    
-    Sigprocmask(SIG_BLOCK, &newmask, NULL);
-    pid = -fgpid(job_list); // Group id needs to be preceded by "-" without quotes.
-    Kill(pid, SIGTSTP); // Send Kill SIGTSTP to pid.
-    sig_tstp = 1; // Successful stop allows parent to exit suspend.
+    Kill(get_sig_gpid(), SIGTSTP); // Send Kill SIGTSTP to pid.
     return;
 }
 
@@ -323,6 +305,18 @@ void init_mask(sigset_t *newmask)
     Sigaddset(newmask, SIGINT);
     Sigaddset(newmask, SIGTSTP);
     return;
+}
+
+pid_t get_sig_gpid() 
+{
+    pid_t pid;
+    sigset_t newmask;
+    init_mask(&newmask);
+    
+    Sigprocmask(SIG_BLOCK, &newmask, NULL);
+    pid = -fgpid(job_list); // Group id needs to be preceded by "-" without quotes.
+    Sigprocmask(SIG_UNBLOCK, &newmask, NULL);
+    return pid;
 }
 
 void set_sig_defaults()
@@ -373,15 +367,6 @@ int gjid_past_perc(char* argv1)
         jid = jid * Npow10(10, count) + atoi(job_str++);
     }
     return jid;
-}
-
-void reset_volatiles() 
-{
-    // Resets the volatile booleans.
-    sig_int = 0;
-    sig_tstp = 0;
-    sig_chld = 0;
-    return;
 }
 
 void builtin_bgfg(char* argv1, sigset_t newmask, job_state state) 
