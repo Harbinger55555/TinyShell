@@ -39,6 +39,8 @@ int gjid_past_perc(char* argv1);
 void builtin_bgfg(char* argv1, sigset_t newmask, job_state state);
 
 volatile sig_atomic_t sig_chld = 0; // When a SIGCHLD signal arrives, set this variable.
+int saved_stdout; // To save stdout before being dup with another file descriptor.
+int saved_stdin; // To save stdin before being dup with another file descriptor.
 
 /*
  * <Write main's function header documentation. What does main do?>
@@ -190,6 +192,9 @@ void eval(const char *cmdline)
 //             printf("Builtin_none! token (%d)\n", token.builtin);
 //             fflush(stdout);
             pid_t pid;
+            /* Save current stdin and stdout for use later */
+            saved_stdin = dup(STDIN_FILENO);
+            saved_stdout = dup(STDOUT_FILENO);
             Sigprocmask(SIG_BLOCK, &newmask, &oldmask); // Block signals in mask before forking.
             pid = Fork();
             if (pid == 0) {
@@ -200,9 +205,17 @@ void eval(const char *cmdline)
                 Sigprocmask(SIG_UNBLOCK, &newmask, NULL);
                 
                 if (token.infile) {
-                    // Redirect token filein to stdin.
-                    freopen(token.infile, "r", stdin);
+                    // Redirect filein to stdin.
+                    FILE *infile = fopen(token.infile, "r");
+                    dup2(fileno(infile), STDIN_FILENO);
                 }
+                
+                if (token.outfile) {
+                    // Redirect stdout to fileout.
+                    FILE *outfile = fopen(token.outfile, "w");
+                    dup2(fileno(outfile), STDOUT_FILENO);
+                }
+                
                 Execve(token.argv[0], token.argv, environ);
                 exit(0);
             } else if (parse_result == PARSELINE_FG) {
@@ -225,6 +238,11 @@ void eval(const char *cmdline)
                 printf("[%d] (%d) %s\n", job->jid, job->pid, cmdline);
                 Sigprocmask(SIG_UNBLOCK, &newmask, NULL);
             }
+            /* Restore stdout and stdin */
+            dup2(saved_stdout, STDOUT_FILENO);
+            close(saved_stdout);
+            dup2(saved_stdin, STDIN_FILENO);
+            close(saved_stdin);
             break;
     }
 	
