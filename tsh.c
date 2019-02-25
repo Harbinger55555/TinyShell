@@ -157,6 +157,22 @@ void eval(const char *cmdline)
     {
         return;
     }
+    
+    /* Save current stdin and stdout for use later */
+    saved_stdin = dup(STDIN_FILENO);
+    saved_stdout = dup(STDOUT_FILENO);
+    
+    if (token.infile) {
+        // Redirect filein to stdin.
+        FILE *infile = fopen(token.infile, "r");
+        dup2(fileno(infile), STDIN_FILENO);
+    }
+
+    if (token.outfile) {
+        // Redirect stdout to fileout.
+        FILE *outfile = fopen(token.outfile, "w");
+        dup2(fileno(outfile), STDOUT_FILENO);
+    }
 	
 	// 1). Check if parsed_result is BUILTIN or not.
 	// 2). If parsed_result is not BUILTIN, run as an executable program.
@@ -189,9 +205,6 @@ void eval(const char *cmdline)
         case BUILTIN_NONE:
             ;
             pid_t pid;
-            /* Save current stdin and stdout for use later */
-            saved_stdin = dup(STDIN_FILENO);
-            saved_stdout = dup(STDOUT_FILENO);
             Sigprocmask(SIG_BLOCK, &newmask, &oldmask); // Block signals in mask before forking.
             pid = Fork();
             if (pid == 0) {
@@ -200,18 +213,6 @@ void eval(const char *cmdline)
                 // Resets signal handlers to default behavior.
                 set_sig_defaults();
                 Sigprocmask(SIG_UNBLOCK, &newmask, NULL);
-                
-                if (token.infile) {
-                    // Redirect filein to stdin.
-                    FILE *infile = fopen(token.infile, "r");
-                    dup2(fileno(infile), STDIN_FILENO);
-                }
-                
-                if (token.outfile) {
-                    // Redirect stdout to fileout.
-                    FILE *outfile = fopen(token.outfile, "w");
-                    dup2(fileno(outfile), STDOUT_FILENO);
-                }
                 
                 Execve(token.argv[0], token.argv, environ);
                 exit(0);
@@ -235,13 +236,14 @@ void eval(const char *cmdline)
                 printf("[%d] (%d) %s\n", job->jid, job->pid, cmdline);
                 Sigprocmask(SIG_UNBLOCK, &newmask, NULL);
             }
-            /* Restore stdout and stdin */
-            dup2(saved_stdout, STDOUT_FILENO);
-            close(saved_stdout);
-            dup2(saved_stdin, STDIN_FILENO);
-            close(saved_stdin);
             break;
     }
+    
+    /* Restore stdout and stdin */
+    dup2(saved_stdout, STDOUT_FILENO);
+    close(saved_stdout);
+    dup2(saved_stdin, STDIN_FILENO);
+    close(saved_stdin);
 	
     return;
 }
