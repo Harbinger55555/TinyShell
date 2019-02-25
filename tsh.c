@@ -185,12 +185,9 @@ void eval(const char *cmdline)
             builtin_bgfg(token.argv[1], newmask, FG);
             while(!sig_chld)
                 Sigsuspend(&oldmask);
-            sig_chld = 0; // Resets the sig_chld volatile.
             break;
         case BUILTIN_NONE:
             ;
-//             printf("Builtin_none! token (%d)\n", token.builtin);
-//             fflush(stdout);
             pid_t pid;
             /* Save current stdin and stdout for use later */
             saved_stdin = dup(STDIN_FILENO);
@@ -219,6 +216,7 @@ void eval(const char *cmdline)
                 Execve(token.argv[0], token.argv, environ);
                 exit(0);
             } else if (parse_result == PARSELINE_FG) {
+                sig_chld = 0; // Resets the sig_chld volatile.
                 // Handle child process in foreground.
                 addjob(job_list, pid, FG, cmdline);
                 
@@ -228,7 +226,6 @@ void eval(const char *cmdline)
                     Sigsuspend(&oldmask);
                 }
                 
-                sig_chld = 0; // Resets the sig_chld volatile.
                 Sigprocmask(SIG_UNBLOCK, &newmask, NULL);
             } else if (parse_result == PARSELINE_BG) {
                 // Handle child process in background.
@@ -268,13 +265,9 @@ void sigchld_handler(int sig)
     // if pid == 0, no change in its state yet.
     while ((pid = waitpid((pid_t)(-1), &status, WNOHANG | WUNTRACED)) > 0) {
         Sigprocmask(SIG_BLOCK, &newmask, NULL);
-//         printf("sigchld_handler pid (%d)\n", pid);
-//         fflush(stdout);
         struct job_t *job = getjobpid(job_list, pid);
         int jid = job->jid;
         state = job->state;
-//         printf("sigchld_handler jid (%d)\n", jid);
-//         fflush(stdout);
         if (WIFEXITED(status) || WIFSIGNALED(status)) {
             deletejob(job_list, pid); // Delete from job_list after child reaped.
             if (WIFSIGNALED(status)) {
@@ -285,11 +278,10 @@ void sigchld_handler(int sig)
             job->state = ST;
             print_kill_job(jid, pid, WSTOPSIG(status));
         }
+        if (state == FG) {
+            sig_chld = 1; // Successful SIGCHLD handling of fg process allows parent to exit suspend.
+        }
         Sigprocmask(SIG_UNBLOCK, &newmask, NULL);
-    }
-        
-    if (state == FG) {
-        sig_chld = 1; // Successful SIGCHLD handling of fg process allows parent to exit suspend.
     }
     return;
 }
@@ -392,6 +384,7 @@ void builtin_bgfg(char* argv1, sigset_t newmask, job_state state)
     if (job && job->state == ST) {
         Kill(-job->pid, SIGCONT); // Will halt program if SIGCONT fails.
         if (state == FG) {
+            sig_chld = 0; // Resets the sig_chld volatile.
             job->state = FG;
         } else if (state == BG) {
             job->state = BG;
