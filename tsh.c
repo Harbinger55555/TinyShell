@@ -37,6 +37,8 @@ void print_kill_job(int jid, pid_t pid, int sig);
 int Npow10(int N, int n);
 int gjid_past_perc(char* argv1);
 void builtin_bgfg(char* argv1, sigset_t newmask, job_state state);
+void new_stdin_and_out(char *infile, char *outfile);
+void reset_stdin_and_out();
 
 volatile sig_atomic_t sig_chld = 0; // When a SIGCHLD signal arrives, set this variable.
 int saved_stdout; // To save stdout before being dup with another file descriptor.
@@ -158,21 +160,7 @@ void eval(const char *cmdline)
         return;
     }
     
-    /* Save current stdin and stdout for use later */
-    saved_stdin = dup(STDIN_FILENO);
-    saved_stdout = dup(STDOUT_FILENO);
-    
-    if (token.infile) {
-        // Redirect filein to stdin.
-        FILE *infile = fopen(token.infile, "r");
-        dup2(fileno(infile), STDIN_FILENO);
-    }
-
-    if (token.outfile) {
-        // Redirect stdout to fileout.
-        FILE *outfile = fopen(token.outfile, "w");
-        dup2(fileno(outfile), STDOUT_FILENO);
-    }
+    new_stdin_and_out(token.infile, token.outfile);
 	
 	// 1). Check if parsed_result is BUILTIN or not.
 	// 2). If parsed_result is not BUILTIN, run as an executable program.
@@ -232,18 +220,13 @@ void eval(const char *cmdline)
                 // Handle child process in background.
                 addjob(job_list, pid, BG, cmdline);
                 struct job_t *job = getjobpid(job_list, pid);
-                
                 printf("[%d] (%d) %s\n", job->jid, job->pid, cmdline);
                 Sigprocmask(SIG_UNBLOCK, &newmask, NULL);
             }
             break;
     }
     
-    /* Restore stdout and stdin */
-    dup2(saved_stdout, STDOUT_FILENO);
-    close(saved_stdout);
-    dup2(saved_stdin, STDIN_FILENO);
-    close(saved_stdin);
+    reset_stdin_and_out();
 	
     return;
 }
@@ -253,7 +236,9 @@ void eval(const char *cmdline)
  *****************/
 
 /* 
- * <What does sigchld_handler do?>
+ * Called when a child is stopped or terminated, either normally or keyboard input.
+ * Thus, calling waitpid in the handler will return the pid of the reaped zombie
+ * child or the process that was stopped.
  */
 void sigchld_handler(int sig) 
 {
@@ -281,7 +266,9 @@ void sigchld_handler(int sig)
             print_kill_job(jid, pid, WSTOPSIG(status));
         }
         if (state == FG) {
-            sig_chld = 1; // Successful SIGCHLD handling of fg process allows parent to exit suspend.
+            // Successful SIGCHLD handling of fg process allows parent to
+            // exit suspend and resume its actions.
+            sig_chld = 1;
         }
         Sigprocmask(SIG_UNBLOCK, &newmask, NULL);
     }
@@ -289,7 +276,8 @@ void sigchld_handler(int sig)
 }
 
 /* 
- * <What does sigint_handler do?>
+ * Called when SIGINT is received. In this case, the shell simply
+ * relays the kill signal SIGINT to the child process.
  */
 void sigint_handler(int sig) 
 {
@@ -298,7 +286,8 @@ void sigint_handler(int sig)
 }
 
 /*
- * <What does sigtstp_handler do?>
+ * Called when SIGTSTP is received. In this case, the shell simply
+ * relays the kill signal SIGTSTP to the child process.
  */
 void sigtstp_handler(int sig) 
 {
@@ -306,6 +295,10 @@ void sigtstp_handler(int sig)
     return;
 }
 
+/*
+ * Empties and adds the three signals (SIGCHLD, SIGINT, SIGTSTP)
+ * into the arg newmask.
+ */ 
 void init_mask(sigset_t *newmask)
 {
     Sigemptyset(newmask);
@@ -315,6 +308,9 @@ void init_mask(sigset_t *newmask)
     return;
 }
 
+/*
+ * Returns the current foreground process group id. 
+ */ 
 pid_t get_sig_gpid() 
 {
     pid_t pid;
@@ -327,6 +323,9 @@ pid_t get_sig_gpid()
     return pid;
 }
 
+/*
+ * Sets the signal handlers of (SIGCHLD, SIGINT, SIGTSTP) back to the defaults.
+ */
 void set_sig_defaults()
 {
     Signal(SIGINT, SIG_DFL);
@@ -335,6 +334,9 @@ void set_sig_defaults()
     return;
 }
 
+/*
+ * Prints the job kill action depending on the arg sig.
+ */
 void print_kill_job(int jid, pid_t pid, int sig)
 {
     Sio_puts("Job [");
@@ -366,6 +368,10 @@ int Npow10(int N, int n)
     return N/10;
 }
 
+/*
+ * Parses and returns the job id following the %. For example, %123,
+ * where job id is 123.
+ */
 int gjid_past_perc(char* argv1) 
 {
     char* job_str = argv1 + 1; // To get rid of the %
@@ -377,6 +383,9 @@ int gjid_past_perc(char* argv1)
     return jid;
 }
 
+/*
+ * Restarts a stopped job as a background or foreground job.
+ */
 void builtin_bgfg(char* argv1, sigset_t newmask, job_state state) 
 {
     Sigprocmask(SIG_BLOCK, &newmask, NULL); // Block signals before accessing job list.
@@ -394,5 +403,41 @@ void builtin_bgfg(char* argv1, sigset_t newmask, job_state state)
         }
     }
     Sigprocmask(SIG_UNBLOCK, &newmask, NULL); // Unblock signals after accessing job list.
+    return;
+}
+
+/*
+ * Duplicates infile and outfile file descriptors as STDIN and STDOUT.
+ */ 
+void new_stdin_and_out(char *infile_name, char *outfile_name)
+{
+    /* Save current stdin and stdout for use later */
+    saved_stdin = dup(STDIN_FILENO);
+    saved_stdout = dup(STDOUT_FILENO);
+    
+    if (infile_name) {
+        // Duplicates filein to stdin.
+        FILE *infile = fopen(infile_name, "r");
+        dup2(fileno(infile), STDIN_FILENO);
+    }
+
+    if (outfile_name) {
+        // Redirect stdout to fileout.
+        FILE *outfile = fopen(outfile_name, "w");
+        dup2(fileno(outfile), STDOUT_FILENO);
+    }
+    return;
+}
+
+/*
+ * Restore stdout and stdin to their defaults. Function requires
+ * previously stored global stdout and stdin file descriptors.
+ */ 
+void reset_stdin_and_out()
+{
+    dup2(saved_stdout, STDOUT_FILENO);
+    close(saved_stdout);
+    dup2(saved_stdin, STDIN_FILENO);
+    close(saved_stdin);
     return;
 }
