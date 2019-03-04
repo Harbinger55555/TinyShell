@@ -1,7 +1,8 @@
 /* 
- * tsh - A tiny shell program with job control
- * <The line above is not a sufficient documentation.
- *  You will need to write your program documentation.>
+ * tsh - A simple Linux shell program that supports job control and 
+ * I/O redirection. The first word in the command line is either the 
+ * name of a built-in command or the pathname of an executable file. 
+ * The remaining words are the command-line arguments.
  */
 
 #include "tsh_helper.h"
@@ -40,16 +41,15 @@ void builtin_bgfg(char* argv1, sigset_t newmask, job_state state);
 void new_stdin_and_out(char *infile, char *outfile);
 void reset_stdin_and_out();
 
-volatile sig_atomic_t sig_chld = 0; // When a SIGCHLD signal arrives, set this variable.
-int saved_stdout; // To save stdout before being dup with another file descriptor.
-int saved_stdin; // To save stdin before being dup with another file descriptor.
+volatile sig_atomic_t sig_chld = 0; // Set when a SIGCHLD signal is received.
+int saved_stdout; // To save stdout before dupping new file descriptor.
+int saved_stdin; // To save stdin before being dupping new file descriptor.
 
 /*
- * <Write main's function header documentation. What does main do?>
- * "Each function should be prefaced with a comment describing the purpose
- *  of the function (in a sentence or two), the function's arguments and
- *  return value, any error cases that are relevant to the caller,
- *  any pertinent side effects, and any assumptions that the function makes."
+ * Repeatedly prints a prompt, waits for a command line on stdin
+ * (standard input), and then passes the formatted command line to the 
+ * eval function which carries out the action directed by the contents 
+ * of the command line.
  */
 int main(int argc, char **argv) 
 {
@@ -141,7 +141,11 @@ int main(int argc, char **argv)
  */
 
 /* 
- * <What does eval do?>
+ * Parses the command line contents into token elements and runs processes
+ * accordingly as defined above (the handy guide). Also properly redirects 
+ * stdout and stdin if file redirection arguments are given in the command
+ * line. Bookkeeping of the jobs and their states are kept in the extern
+ * job_list.
  */
 void eval(const char *cmdline) 
 {
@@ -170,9 +174,10 @@ void eval(const char *cmdline)
             exit(0);
             break;
         case BUILTIN_JOBS:
-            Sigprocmask(SIG_BLOCK, &newmask, NULL); // Block signals before accessing job list.
+            // Block signals before accessing job list and unblock afterwards.
+            Sigprocmask(SIG_BLOCK, &newmask, NULL);
             listjobs(job_list, STDOUT_FILENO); // Print the job list on stdout.
-            Sigprocmask(SIG_UNBLOCK, &newmask, NULL); // Unblock signals after accessing job list.
+            Sigprocmask(SIG_UNBLOCK, &newmask, NULL);
             break;
         case BUILTIN_BG:
             ;
@@ -193,10 +198,12 @@ void eval(const char *cmdline)
         case BUILTIN_NONE:
             ;
             pid_t pid;
-            Sigprocmask(SIG_BLOCK, &newmask, &oldmask); // Block signals in mask before forking.
+            Sigprocmask(SIG_BLOCK, &newmask, &oldmask); // Block before forking.
             pid = Fork();
             if (pid == 0) {
-                Setpgid(0, 0); // puts the child in a new process group with identical group ID to its PID.
+                // Puts the child in a new process group with identical group ID
+                // to its PID.
+                Setpgid(0, 0);
 				
                 // Resets signal handlers to default behavior.
                 set_sig_defaults();
@@ -209,8 +216,7 @@ void eval(const char *cmdline)
                 // Handle child process in foreground.
                 addjob(job_list, pid, FG, cmdline);
                 
-                // Suspends the shell until a signal whose action is to 
-                // invoke a signal handler or to terminate a process is received.
+                // Suspends the shell until SIGCHLD is received.
                 while(!sig_chld) {
                     Sigsuspend(&oldmask);
                 }
@@ -236,9 +242,9 @@ void eval(const char *cmdline)
  *****************/
 
 /* 
- * Called when a child is stopped or terminated, either normally or keyboard input.
- * Thus, calling waitpid in the handler will return the pid of the reaped zombie
- * child or the process that was stopped.
+ * Called when a child is stopped or terminated, either normally or 
+ * keyboard input. Thus, calling waitpid in the handler will return 
+ * the pid of the reaped zombie child or the process that was stopped.
  */
 void sigchld_handler(int sig) 
 {
@@ -256,7 +262,8 @@ void sigchld_handler(int sig)
         int jid = job->jid;
         state = job->state;
         if (WIFEXITED(status) || WIFSIGNALED(status)) {
-            deletejob(job_list, pid); // Delete from job_list after child reaped.
+            // Delete from job_list after child reaped.
+            deletejob(job_list, pid);
             if (WIFSIGNALED(status)) {
                 print_kill_job(jid, pid, WTERMSIG(status));
             }
@@ -318,7 +325,7 @@ pid_t get_sig_gpid()
     init_mask(&newmask);
     
     Sigprocmask(SIG_BLOCK, &newmask, NULL);
-    pid = -fgpid(job_list); // Group id needs to be preceded by "-" without quotes.
+    pid = -fgpid(job_list); // Group id preceded by "-" without quotes.
     Sigprocmask(SIG_UNBLOCK, &newmask, NULL);
     return pid;
 }
@@ -388,7 +395,8 @@ int gjid_past_perc(char* argv1)
  */
 void builtin_bgfg(char* argv1, sigset_t newmask, job_state state) 
 {
-    Sigprocmask(SIG_BLOCK, &newmask, NULL); // Block signals before accessing job list.
+    // Block signals before accessing job list.
+    Sigprocmask(SIG_BLOCK, &newmask, NULL);
     int jid = gjid_past_perc(argv1);
             
     struct job_t *job = getjobjid(job_list, jid);
@@ -402,7 +410,8 @@ void builtin_bgfg(char* argv1, sigset_t newmask, job_state state)
             printf("[%d] (%d) %s\n", jid, job->pid, job->cmdline);
         }
     }
-    Sigprocmask(SIG_UNBLOCK, &newmask, NULL); // Unblock signals after accessing job list.
+    // Unblock signals after accessing job list.
+    Sigprocmask(SIG_UNBLOCK, &newmask, NULL);
     return;
 }
 
@@ -422,7 +431,7 @@ void new_stdin_and_out(char *infile_name, char *outfile_name)
     }
 
     if (outfile_name) {
-        // Redirect stdout to fileout.
+        // Duplicates fileout to stdout.
         FILE *outfile = fopen(outfile_name, "w");
         dup2(fileno(outfile), STDOUT_FILENO);
     }
